@@ -1,6 +1,7 @@
 'use strict';
 
 const blessed = require('blessed');
+const contrib = require('blessed-contrib');
 const path = require('path');
 const os = require('os');
 const { formatNum } = require('./usage');
@@ -208,12 +209,12 @@ class HackviewUI {
   _buildLayout() {
     const sh = this.screen.height;
 
-    // Header panel: 8 lines + border = 10 total
-    const headerHeight = 9;
+    // Header panel: bigger for contrib gauges
+    const headerHeight = 12;
     const remainingH   = sh - headerHeight;
     const sessionH     = Math.floor(remainingH / this.numSessions);
 
-    // ── HEADER BOX ──
+    // ── HEADER: outer container ──
     this.headerBox = blessed.box({
       top: 0, left: 0,
       width: '100%',
@@ -227,6 +228,92 @@ class HackviewUI {
       },
     });
     this.screen.append(this.headerBox);
+
+    // Title + clock (top row inside header)
+    this.titleBox = blessed.box({
+      parent: this.headerBox,
+      top: 0, left: 0,
+      width: '100%',
+      height: 1,
+      tags: true,
+      style: { fg: COLORS.green, bg: COLORS.black },
+    });
+
+    // CPU gauge (blessed-contrib)
+    this.cpuGauge = contrib.gauge({
+      parent: this.headerBox,
+      top: 1, left: 0,
+      width: '50%',
+      height: 3,
+      label: ' CPU ',
+      stroke: 'green',
+      fill: 'black',
+      border: { type: 'line', fg: COLORS.darkGreen },
+      style: {
+        fg: COLORS.green,
+        bg: COLORS.black,
+        border: { fg: COLORS.darkGreen },
+      },
+    });
+
+    // MEM gauge (blessed-contrib)
+    this.memGauge = contrib.gauge({
+      parent: this.headerBox,
+      top: 1, left: '50%',
+      width: '50%',
+      height: 3,
+      label: ' MEM ',
+      stroke: 'cyan',
+      fill: 'black',
+      border: { type: 'line', fg: COLORS.darkGreen },
+      style: {
+        fg: COLORS.cyan,
+        bg: COLORS.black,
+        border: { fg: COLORS.darkGreen },
+      },
+    });
+
+    // NET sparkline (blessed-contrib)
+    this.netSpark = contrib.sparkline({
+      parent: this.headerBox,
+      top: 4, left: 0,
+      width: '50%',
+      height: 3,
+      label: ' NET ',
+      tags: true,
+      border: { type: 'line', fg: COLORS.darkGreen },
+      style: {
+        fg: COLORS.green,
+        bg: COLORS.black,
+        border: { fg: COLORS.darkGreen },
+      },
+    });
+
+    // Usage text box (right of sparkline)
+    this.usageBox = blessed.box({
+      parent: this.headerBox,
+      top: 4, left: '50%',
+      width: '50%',
+      height: 3,
+      tags: true,
+      border: { type: 'line', fg: COLORS.darkGreen },
+      label: ' TOKENS ',
+      style: {
+        fg: COLORS.green,
+        bg: COLORS.black,
+        border: { fg: COLORS.darkGreen },
+      },
+    });
+
+    // Bottom info row inside header
+    this.infoRow = blessed.box({
+      parent: this.headerBox,
+      top: 7, left: 0,
+      width: '100%',
+      height: 2,
+      tags: true,
+      style: { fg: COLORS.green, bg: COLORS.black },
+    });
 
     // ── SESSION PANELS ──
     for (let i = 0; i < this.numSessions; i++) {
@@ -298,92 +385,69 @@ class HackviewUI {
       const mem = getMemPercent();
       const uptime = formatUptime(Date.now() - this._startTime);
       const clock = formatClock();
-      const spark = renderSparkline(_netHistory);
       const netSpeed = formatBytes(_lastNetBytes);
 
-      // CPU bar (small, 8 chars)
-      const cpuBar = makeBar(cpu / 100, 8);
-      // Mem bar (10 chars)
-      const memBar = makeBar(mem.pct / 100, 10);
-
-      // Helper: pad/fill a row to full width
+      // Title row: clock + title + uptime
+      const title = '◈ H A C K V I E W ◈';
+      const stripTags = (s) => s.replace(/\{[^}]*\}/g, '');
       const pad = (left, right, w) => {
-        const stripTags = (s) => s.replace(/\{[^}]*\}/g, '');
         const visL = stripTags(left).length;
         const visR = stripTags(right).length;
         const gap = Math.max(1, w - visL - visR);
         return left + ' '.repeat(gap) + right;
       };
-
-      // Row 1: Clock left, HACKVIEW center, CPU right
-      const cpuColor = cpu > 80 ? COLORS.red : cpu > 50 ? COLORS.yellow : COLORS.green;
-      const title = '◈ H A C K V I E W ◈';
-      const cpuStr = `{${cpuColor}-fg}CPU ▲${String(cpu).padStart(2)}%{/} {#005500-fg}${cpuBar}{/}`;
       const clockStr = `{green-fg}{bold}${clock}{/bold}{/green-fg}`;
       const titleStr = `{bold}{green-fg}${title}{/green-fg}{/bold}`;
-      // center the title
-      const stripTags = (s) => s.replace(/\{[^}]*\}/g, '');
+      const upStr = `{#006666-fg}UP{/} {#00aa00-fg}${uptime}{/}`;
       const clockVis = stripTags(clockStr).length;
       const titleVis = stripTags(titleStr).length;
-      const cpuVis = stripTags(cpuStr).length;
-      const totalVis = clockVis + titleVis + cpuVis;
-      const gapTotal = Math.max(0, sw - totalVis);
+      const upVis = stripTags(upStr).length;
+      const gapTotal = Math.max(0, sw - clockVis - titleVis - upVis);
       const gapL = Math.floor(gapTotal / 2);
       const gapR = gapTotal - gapL;
-      const row1 = clockStr + ' '.repeat(gapL) + titleStr + ' '.repeat(gapR) + cpuStr;
+      this.titleBox.setContent(clockStr + ' '.repeat(gapL) + titleStr + ' '.repeat(gapR) + upStr);
 
-      // Row 2: MEM left, uptime right
-      const memColor = mem.pct > 85 ? COLORS.red : mem.pct > 65 ? COLORS.yellow : COLORS.dimGreen;
-      const memBarWide = makeBar(mem.pct / 100, 16);
-      const memStr = `{#006666-fg}MEM{/} {${memColor}-fg}${memBarWide}{/} {#00aa00-fg}${mem.pct}%{/}`;
-      const upStr = `{#006666-fg}UPTIME{/} {#00aa00-fg}${uptime}{/}`;
-      const row2 = pad(memStr, upStr, sw);
+      // CPU gauge
+      this.cpuGauge.setPercent(cpu);
 
-      // Row 3: Network sparkline left, speed right
-      const sparkWide = renderSparkline(_netHistory);
-      const netStr = `{#006666-fg}NET{/} {#005500-fg}${sparkWide}{/}`;
-      const speedStr = `{#00aa00-fg}${netSpeed}{/}`;
-      const row3 = pad(netStr, speedStr, sw);
+      // MEM gauge
+      this.memGauge.setPercent(mem.pct);
 
-      // Divider
-      const div = `{#003300-fg}${'─'.repeat(Math.max(0, sw))}{/}`;
+      // NET sparkline
+      try {
+        this.netSpark.setData([' ' + netSpeed], [_netHistory]);
+      } catch (e) { /* some blessed-contrib versions differ */ }
 
-      // Usage rows
-      let usageRow1 = pad('{#006666-fg}◈ TOKENS{/}', '{#005500-fg}awaiting ccusage...{/}', sw);
-      let usageRow2 = '';
-
+      // Usage box
+      let usageContent = '{#005500-fg}awaiting ccusage...{/}';
       if (this._usageData && this._usageData._error) {
-        usageRow1 = `{red-fg}✗ ccusage error:{/} {#ff6666-fg}${escTag(this._usageData.message).slice(0, sw - 5)}{/}`;
-        usageRow2 = '{#666666-fg}try: npx ccusage@latest daily --json{/}';
+        usageContent = `{red-fg}✗ ${escTag(this._usageData.message).slice(0, sw / 2 - 5)}{/}`;
       } else if (this._usageData) {
         const d = this._usageData;
         const inStr   = formatNum(d.totalInput);
         const outStr  = formatNum(d.totalOutput);
         const costStr = d.totalCost ? `$${d.totalCost.toFixed(2)}` : '$0.00';
-        const cacheStr = d.totalCacheRead ? formatNum(d.totalCacheRead) : '0';
+        usageContent = `{green-fg}{bold}${inStr}{/bold}{/green-fg} in {green-fg}{bold}${outStr}{/bold}{/green-fg} out {green-fg}{bold}${costStr}{/bold}{/green-fg}`;
+      }
+      this.usageBox.setContent(usageContent);
 
-        const tokLeft = `{#006666-fg}TODAY{/} {green-fg}{bold}${inStr}{/bold}{/green-fg} in / {green-fg}{bold}${outStr}{/bold}{/green-fg} out`;
-        const tokRight = `{#006666-fg}cache:{/} {#00aa00-fg}${cacheStr}{/}  {green-fg}{bold}${costStr}{/bold}{/green-fg}`;
-        usageRow1 = pad(tokLeft, tokRight, sw);
-
-        const models = Object.entries(d.modelBreakdown || {});
+      // Info row: model breakdown
+      let infoContent = '';
+      if (this._usageData && !this._usageData._error) {
+        const models = Object.entries(this._usageData.modelBreakdown || {});
         if (models.length > 0) {
           const totalTok = models.reduce((s, [, v]) => s + (v.input || 0) + (v.output || 0), 0) || 1;
-          const barW = Math.min(10, Math.floor((sw - 10) / Math.max(1, models.length)));
+          const barW = Math.min(12, Math.floor((sw - 10) / Math.max(1, models.length)));
           const parts = models.map(([model, stats]) => {
             const tok   = (stats.input || 0) + (stats.output || 0);
             const ratio = tok / totalTok;
             const bar   = makeBar(ratio, barW);
-            return `{#00aa00-fg}${shortModelName(model)}{/} {green-fg}${bar}{/}`;
+            return `{#00aa00-fg}${shortModelName(model)}{/} {green-fg}${bar}{/} {#006666-fg}${Math.round(ratio * 100)}%{/}`;
           });
-          usageRow2 = parts.join('  ');
+          infoContent = parts.join('  ');
         }
       }
-
-      const lines = [row1, row2, row3, div, usageRow1];
-      if (usageRow2) lines.push(usageRow2);
-
-      this.headerBox.setContent(lines.join('\n'));
+      this.infoRow.setContent(infoContent);
     } catch (e) {
       // don't crash
     }
