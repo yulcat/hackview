@@ -69,11 +69,12 @@ function parseUsageOutput(stdout) {
 
     const data = JSON.parse(jsonStr);
 
-    // data could be array of daily records or object with totals
-    if (Array.isArray(data)) {
+    // ccusage wraps in {daily: [...], totals: {...}}
+    if (data && data.daily && Array.isArray(data.daily)) {
+      return aggregateUsage(data.daily);
+    } else if (Array.isArray(data)) {
       return aggregateUsage(data);
     } else if (data && typeof data === 'object') {
-      // single day object
       return formatUsageData(data);
     }
     return null;
@@ -84,10 +85,9 @@ function parseUsageOutput(stdout) {
 
 function aggregateUsage(records) {
   const today = getTodayDate();
-  const todayRecords = records.filter(r => r.date === today || !r.date);
+  const todayRecords = records.filter(r => r.date === today);
 
   if (todayRecords.length === 0 && records.length > 0) {
-    // Use most recent
     todayRecords.push(records[records.length - 1]);
   }
 
@@ -97,19 +97,27 @@ function aggregateUsage(records) {
   const modelBreakdown = {};
 
   for (const r of todayRecords) {
-    totalInput += r.inputTokens || r.input_tokens || 0;
-    totalOutput += r.outputTokens || r.output_tokens || 0;
-    totalCost += r.cost || r.totalCost || 0;
-    totalCacheRead += r.cacheReadTokens || r.cache_read_input_tokens || 0;
-    totalCacheWrite += r.cacheCreationTokens || r.cache_creation_input_tokens || 0;
+    totalInput += r.inputTokens || 0;
+    totalOutput += r.outputTokens || 0;
+    totalCost += r.totalCost || r.cost || 0;
+    totalCacheRead += r.cacheReadTokens || 0;
+    totalCacheWrite += r.cacheCreationTokens || 0;
 
-    // model breakdown
-    if (r.models || r.modelBreakdown) {
-      const mb = r.models || r.modelBreakdown;
-      for (const [model, stats] of Object.entries(mb)) {
+    // ccusage format: modelBreakdowns is an array of {modelName, inputTokens, ...}
+    const breakdowns = r.modelBreakdowns || r.modelBreakdown || [];
+    if (Array.isArray(breakdowns)) {
+      for (const mb of breakdowns) {
+        const name = mb.modelName || mb.model || 'unknown';
+        if (!modelBreakdown[name]) modelBreakdown[name] = { input: 0, output: 0, cost: 0 };
+        modelBreakdown[name].input += mb.inputTokens || 0;
+        modelBreakdown[name].output += mb.outputTokens || 0;
+        modelBreakdown[name].cost += mb.cost || 0;
+      }
+    } else if (typeof breakdowns === 'object') {
+      for (const [model, stats] of Object.entries(breakdowns)) {
         if (!modelBreakdown[model]) modelBreakdown[model] = { input: 0, output: 0, cost: 0 };
-        modelBreakdown[model].input += stats.inputTokens || stats.input_tokens || 0;
-        modelBreakdown[model].output += stats.outputTokens || stats.output_tokens || 0;
+        modelBreakdown[model].input += stats.inputTokens || 0;
+        modelBreakdown[model].output += stats.outputTokens || 0;
         modelBreakdown[model].cost += stats.cost || 0;
       }
     }
@@ -128,14 +136,22 @@ function aggregateUsage(records) {
 
 function formatUsageData(r) {
   const today = getTodayDate();
+  const modelBreakdown = {};
+  const breakdowns = r.modelBreakdowns || r.modelBreakdown || [];
+  if (Array.isArray(breakdowns)) {
+    for (const mb of breakdowns) {
+      const name = mb.modelName || mb.model || 'unknown';
+      modelBreakdown[name] = { input: mb.inputTokens || 0, output: mb.outputTokens || 0, cost: mb.cost || 0 };
+    }
+  }
   return {
     date: r.date || today,
-    totalInput: r.inputTokens || r.input_tokens || 0,
-    totalOutput: r.outputTokens || r.output_tokens || 0,
-    totalCost: r.cost || r.totalCost || 0,
-    totalCacheRead: r.cacheReadTokens || r.cache_read_input_tokens || 0,
-    totalCacheWrite: r.cacheCreationTokens || r.cache_creation_input_tokens || 0,
-    modelBreakdown: r.models || r.modelBreakdown || {},
+    totalInput: r.inputTokens || 0,
+    totalOutput: r.outputTokens || 0,
+    totalCost: r.totalCost || r.cost || 0,
+    totalCacheRead: r.cacheReadTokens || 0,
+    totalCacheWrite: r.cacheCreationTokens || 0,
+    modelBreakdown,
   };
 }
 
