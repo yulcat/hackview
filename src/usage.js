@@ -15,6 +15,14 @@ function getTodayDate() {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
+  return `${y}${m}${day}`;
+}
+
+function getTodayDateHyphen() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
 
@@ -100,8 +108,9 @@ function parseUsageOutput(stdout) {
 }
 
 function aggregateUsage(records) {
-  const today = getTodayDate();
-  const todayRecords = records.filter(r => r.date === today);
+  const today = getTodayDateHyphen();
+  const todayCompact = getTodayDate();
+  const todayRecords = records.filter(r => r.date === today || r.date === todayCompact);
 
   if (todayRecords.length === 0 && records.length > 0) {
     todayRecords.push(records[records.length - 1]);
