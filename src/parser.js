@@ -55,9 +55,11 @@ function extractEvent(record) {
 
         for (const block of contentBlocks) {
           if (block.type === 'thinking') {
+            // Extract thinking text, ignore signature (long base64)
+            const thinkingText = block.thinking || '';
             events.push({
               type: 'thinking',
-              content: block.thinking ? block.thinking.slice(0, 80) + '...' : 'thinking...',
+              content: thinkingText, // full text, truncation handled in UI
               messageId: msg.id,
               isComplete: msg.stop_reason !== null,
               usage: msg.usage || null,
@@ -92,6 +94,17 @@ function extractEvent(record) {
             isComplete: true,
             usage: msg.usage || null,
           }];
+        }
+
+        // If stop_reason is set, also emit a 'complete' event after content events
+        if (msg.stop_reason !== null && events.length > 0) {
+          events.push({
+            type: 'complete',
+            content: `[${msg.stop_reason}]`,
+            messageId: msg.id,
+            isComplete: true,
+            usage: msg.usage || null,
+          });
         }
 
         return events.length > 0 ? events : null;

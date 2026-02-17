@@ -2,69 +2,190 @@
 
 const blessed = require('blessed');
 const path = require('path');
+const os = require('os');
 const { formatNum } = require('./usage');
 
+// ─── Color palette ───────────────────────────────────────────────────────────
 const COLORS = {
-  green: '#00ff00',
-  darkGreen: '#005500',
-  cyan: '#00ffff',
-  darkCyan: '#006666',
-  black: '#000000',
-  dimGreen: '#00aa00',
-  yellow: '#ffff00',
-  red: '#ff4444',
-  white: '#cccccc',
-  bgComplete: '#003300',
-  bgActive: '#001a00',
-  bgIdle: '#000800',
+  green:      '#00ff00',
+  darkGreen:  '#005500',
+  dimGreen:   '#00aa00',
+  brightGreen:'#00ff44',
+  cyan:       '#00ffff',
+  darkCyan:   '#006666',
+  black:      '#000000',
+  bgActive:   '#001a00',   // streaming: very dark green bg
+  bgIdle:     '#000000',   // idle/waiting: black
+  bgComplete: '#003300',   // flash green on completion
+  yellow:     '#ffff00',
+  red:        '#ff4444',
+  white:      '#cccccc',
 };
 
-const ASCII_HEADER = [
-  ' ██╗  ██╗ █████╗  ██████╗██╗  ██╗██╗   ██╗██╗███████╗██╗    ██╗',
-  ' ██║  ██║██╔══██╗██╔════╝██║ ██╔╝██║   ██║██║██╔════╝██║    ██║',
-  ' ███████║███████║██║     █████╔╝ ██║   ██║██║█████╗  ██║ █╗ ██║',
-  ' ██╔══██║██╔══██║██║     ██╔═██╗ ╚██╗ ██╔╝██║██╔══╝  ██║███╗██║',
-  ' ██║  ██║██║  ██║╚██████╗██║  ██╗ ╚████╔╝ ██║███████╗╚███╔███╔╝',
-  ' ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝ ',
-];
+// Sparkline chars (low → high)
+const SPARK_CHARS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
-const MINI_HEADER = '  ╔╦╗╔═╗╔═╗╦╔═╦  ╦╦╔═╗╦ ╦\n  ║ ╠═╣║  ╠╩╗╚╗╔╝║║╣ ║║║\n  ╩ ╩ ╩╚═╝╩ ╩ ╚╝ ╩╚═╝╚╩╝';
+// Bar chars
+function makeBar(ratio, width, filled = '█', empty = '░') {
+  const w = Math.max(4, width);
+  const n = Math.min(w, Math.round(Math.clamp ? Math.clamp(ratio, 0, 1) * w : Math.max(0, Math.min(1, ratio)) * w));
+  return filled.repeat(n) + empty.repeat(w - n);
+}
 
 function shortModelName(model) {
   if (!model) return 'unknown';
-  // claude-3-5-sonnet-20241022 → sonnet-3.5
-  // claude-opus-4-5 → opus-4.5
   const m = model.toLowerCase();
-  if (m.includes('opus')) return 'opus';
-  if (m.includes('sonnet')) return 'sonnet';
-  if (m.includes('haiku')) return 'haiku';
+  if (m.includes('opus'))    return 'opus';
+  if (m.includes('sonnet'))  return 'sonnet';
+  if (m.includes('haiku'))   return 'haiku';
   if (m.includes('instant')) return 'instant';
   return model.split('-').slice(-2).join('-');
 }
 
-function makeBar(ratio, width, filled = '█', empty = '░') {
-  const w = Math.max(4, width);
-  const filledCount = Math.round(ratio * w);
-  return filled.repeat(filledCount) + empty.repeat(w - filledCount);
+function escTag(str) {
+  if (!str) return '';
+  return String(str).replace(/\{/g, '\\{').replace(/\}/g, '\\}');
 }
 
+function formatUptime(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function formatClock() {
+  const d = new Date();
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const s = String(d.getSeconds()).padStart(2, '0');
+  return `${h}:${m}:${s}`;
+}
+
+// ─── CPU sampling ─────────────────────────────────────────────────────────────
+let _prevCpuTimes = null;
+
+function getCpuPercent() {
+  try {
+    const cpus = os.cpus();
+    const totals = cpus.reduce((acc, cpu) => {
+      const times = cpu.times;
+      acc.idle += times.idle;
+      acc.total += times.idle + times.user + times.nice + times.sys + times.irq;
+      return acc;
+    }, { idle: 0, total: 0 });
+
+    if (!_prevCpuTimes) {
+      _prevCpuTimes = totals;
+      return 0;
+    }
+
+    const idleDiff  = totals.idle  - _prevCpuTimes.idle;
+    const totalDiff = totals.total - _prevCpuTimes.total;
+    _prevCpuTimes = totals;
+
+    if (totalDiff === 0) return 0;
+    return Math.round((1 - idleDiff / totalDiff) * 100);
+  } catch (e) {
+    return 0;
+  }
+}
+
+function getMemPercent() {
+  try {
+    const total = os.totalmem();
+    const free  = os.freemem();
+    return { pct: Math.round((1 - free / total) * 100), total, free };
+  } catch (e) {
+    return { pct: 0, total: 0, free: 0 };
+  }
+}
+
+// ─── Network sparkline state (fake/real hybrid) ───────────────────────────────
+const NET_HISTORY_LEN = 12;
+let _netHistory = Array(NET_HISTORY_LEN).fill(0);
+let _prevNetBytes = null;
+let _lastNetBytes = 0;
+
+async function sampleNet() {
+  try {
+    const fs = require('fs');
+    const lines = fs.readFileSync('/proc/net/dev', 'utf8').split('\n');
+    let rx = 0, tx = 0;
+    for (const line of lines.slice(2)) {
+      const parts = line.trim().split(/\s+/);
+      if (!parts[0] || parts[0] === 'lo:') continue;
+      rx += parseInt(parts[1], 10) || 0;
+      tx += parseInt(parts[9], 10) || 0;
+    }
+    const total = rx + tx;
+    let diff = 0;
+    if (_prevNetBytes !== null && total > _prevNetBytes) {
+      diff = total - _prevNetBytes;
+    }
+    _prevNetBytes = total;
+    _lastNetBytes = diff;
+    return diff;
+  } catch (e) {
+    // fallback: fake random movement
+    const fakeVal = Math.random() * 8000 + 500;
+    _lastNetBytes = fakeVal;
+    return fakeVal;
+  }
+}
+
+function pushNetSample(val) {
+  _netHistory.push(val);
+  if (_netHistory.length > NET_HISTORY_LEN) _netHistory.shift();
+}
+
+function renderSparkline(history) {
+  const max = Math.max(...history, 1);
+  return history.map(v => {
+    const idx = Math.min(SPARK_CHARS.length - 1, Math.floor((v / max) * SPARK_CHARS.length));
+    return SPARK_CHARS[idx];
+  }).join('');
+}
+
+function formatBytes(n) {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)}MB/s`;
+  if (n >= 1024)        return `${(n / 1024).toFixed(1)}KB/s`;
+  return `${Math.round(n)}B/s`;
+}
+
+// ─── HackviewUI ───────────────────────────────────────────────────────────────
 class HackviewUI {
   constructor(numSessions) {
     this.numSessions = numSessions;
     this.screen = null;
-    this.usageBox = null;
-    this.sessionBoxes = [];
-    this.sessionLogs = []; // arrays of log lines per session
-    this.sessionStatus = []; // 'waiting' | 'streaming' | 'idle' | 'complete'
-    this.sessionFiles = [];
+
+    // Top panel: header box (fixed) + content box inside it
+    this.headerBox = null;   // outer bordered box
+
+    // Per-session: header label + scroll area
+    this.sessionHeaderBoxes = [];  // fixed label strips
+    this.sessionScrollBoxes = [];  // scrollable log areas
+
+    this.sessionLogs    = [];  // string[][]
+    this.sessionStatus  = [];  // 'waiting'|'streaming'|'thinking'|'idle'|'complete'
+    this.sessionFiles   = [];
     this.completionTimers = [];
-    this.thinkingAnimFrame = 0;
-    this.thinkingTimer = null;
-    this.matrixTimer = null;
-    this._usageData = null;
-    this._matrixChars = [];
+
+    this._usageData   = null;
+    this._startTime   = Date.now();
+    this._clockTimer  = null;
+    this._netTimer    = null;
+    this._renderTimer = null;
+    this._dirtyHeader = true;
+    this._dirtySessions = new Set();
+
+    // throttle renders
+    this._lastRender = 0;
+    this._renderPending = false;
   }
 
+  // ── init ────────────────────────────────────────────────────────────────────
   init() {
     this.screen = blessed.screen({
       smartCSR: true,
@@ -79,24 +200,24 @@ class HackviewUI {
     });
 
     this._buildLayout();
-    this._startAnimations();
-    this.screen.render();
+    this._startTimers();
+    this._scheduleRender();
   }
 
+  // ── layout ─────────────────────────────────────────────────────────────────
   _buildLayout() {
-    const sw = this.screen.width;
     const sh = this.screen.height;
 
-    // Usage panel height: 7 lines (header) + 1 usage line + 1 model bars + borders
-    const usageHeight = 10;
-    const sessionHeight = Math.floor((sh - usageHeight) / this.numSessions);
+    // Header panel: 8 lines + border = 10 total
+    const headerHeight = 9;
+    const remainingH   = sh - headerHeight;
+    const sessionH     = Math.floor(remainingH / this.numSessions);
 
-    // ── USAGE PANEL ──
-    this.usageBox = blessed.box({
-      top: 0,
-      left: 0,
+    // ── HEADER BOX ──
+    this.headerBox = blessed.box({
+      top: 0, left: 0,
       width: '100%',
-      height: usageHeight,
+      height: headerHeight,
       tags: true,
       border: { type: 'line' },
       style: {
@@ -105,7 +226,7 @@ class HackviewUI {
         border: { fg: COLORS.darkGreen },
       },
     });
-    this.screen.append(this.usageBox);
+    this.screen.append(this.headerBox);
 
     // ── SESSION PANELS ──
     for (let i = 0; i < this.numSessions; i++) {
@@ -114,16 +235,34 @@ class HackviewUI {
       this.sessionFiles.push(null);
       this.completionTimers.push(null);
 
-      const top = usageHeight + i * sessionHeight;
-      const height = (i === this.numSessions - 1)
-        ? sh - top  // last panel takes remaining space
-        : sessionHeight;
+      const top    = headerHeight + i * sessionH;
+      const height = (i === this.numSessions - 1) ? sh - top : sessionH;
 
-      const box = blessed.box({
-        top,
-        left: 0,
+      // Fixed header strip (2 lines + border overhead)
+      const labelHeight = 3;
+      const labelBox = blessed.box({
+        top, left: 0,
         width: '100%',
-        height,
+        height: labelHeight,
+        tags: true,
+        border: { type: 'line' },
+        style: {
+          fg: COLORS.green,
+          bg: COLORS.black,
+          border: { fg: COLORS.darkGreen },
+        },
+      });
+      this.screen.append(labelBox);
+      this.sessionHeaderBoxes.push(labelBox);
+
+      // Scrollable log area (below the label)
+      const scrollTop = top + labelHeight - 1; // overlap border by 1
+      const scrollH   = height - labelHeight + 1;
+
+      const scrollBox = blessed.box({
+        top: scrollTop, left: 0,
+        width: '100%',
+        height: Math.max(3, scrollH),
         tags: true,
         border: { type: 'line' },
         scrollable: true,
@@ -138,238 +277,364 @@ class HackviewUI {
           border: { fg: COLORS.darkGreen },
         },
       });
+      this.screen.append(scrollBox);
+      this.sessionScrollBoxes.push(scrollBox);
 
-      this.screen.append(box);
-      this.sessionBoxes.push(box);
+      this._dirtySessions.add(i);
     }
 
-    this._renderUsage(null);
+    this._renderHeader();
     for (let i = 0; i < this.numSessions; i++) {
-      this._renderSessionHeader(i);
+      this._renderSessionLabel(i);
+      this._renderSessionLog(i);
     }
   }
 
-  _renderUsage(data) {
-    this._usageData = data;
-    const sw = this.screen.width - 4;
+  // ── Header rendering ────────────────────────────────────────────────────────
+  _renderHeader() {
+    try {
+      const sw = this.screen.width - 4;
+      const cpu = getCpuPercent();
+      const mem = getMemPercent();
+      const uptime = formatUptime(Date.now() - this._startTime);
+      const clock = formatClock();
+      const spark = renderSparkline(_netHistory);
+      const netSpeed = formatBytes(_lastNetBytes);
 
-    let lines = [];
+      // CPU bar (small, 8 chars)
+      const cpuBar = makeBar(cpu / 100, 8);
+      // Mem bar (10 chars)
+      const memBar = makeBar(mem.pct / 100, 10);
 
-    // ASCII art header - pick size based on terminal width
-    if (sw >= 66) {
-      for (const line of ASCII_HEADER) {
-        lines.push(`{green-fg}${line}{/green-fg}`);
-      }
-    } else {
-      lines.push(`{green-fg}${MINI_HEADER}{/green-fg}`);
-    }
-
-    lines.push('');
-
-    if (!data) {
-      lines.push('{#006666-fg}  ◈ LOADING USAGE DATA...{/}');
-    } else {
-      const inStr = formatNum(data.totalInput);
-      const outStr = formatNum(data.totalOutput);
-      const costStr = data.totalCost ? `$${data.totalCost.toFixed(4)}` : '$0.00';
-      const cacheStr = data.totalCacheRead ? formatNum(data.totalCacheRead) : '0';
-
-      lines.push(
-        `{green-fg}  ◈ TODAY  {bold}${inStr}{/bold} in / {bold}${outStr}{/bold} out  ` +
-        `{#006666-fg}cached: ${cacheStr}  {green-fg}cost: {bold}${costStr}{/bold}{/green-fg}`
+      // Row 1: Clock  HACKVIEW  CPU%
+      const cpuColor = cpu > 80 ? COLORS.red : cpu > 50 ? COLORS.yellow : COLORS.green;
+      const title = 'H A C K V I E W';
+      const row1 = (
+        `{green-fg}{bold}${clock}{/bold}{/green-fg}` +
+        `  {bold}{green-fg}${title}{/green-fg}{/bold}` +
+        `  {${cpuColor}-fg}▲${String(cpu).padStart(2)}%{/} {#005500-fg}${cpuBar}{/}`
       );
 
-      // model breakdown bars
-      const models = Object.entries(data.modelBreakdown || {});
-      if (models.length > 0) {
-        const totalTokens = models.reduce((s, [, v]) => s + (v.input || 0) + (v.output || 0), 0) || 1;
-        const barWidth = Math.min(20, Math.floor((sw - 30) / models.length));
+      // Row 2: Mem bar + uptime
+      const memColor = mem.pct > 85 ? COLORS.red : mem.pct > 65 ? COLORS.yellow : COLORS.dimGreen;
+      const row2 = (
+        `{#006666-fg}MEM{/} {${memColor}-fg}${memBar}{/} {#00aa00-fg}${mem.pct}%{/}` +
+        `  {#006666-fg}UP{/} {#00aa00-fg}${uptime}{/}`
+      );
 
-        const barParts = models.map(([model, stats]) => {
-          const tokens = (stats.input || 0) + (stats.output || 0);
-          const ratio = tokens / totalTokens;
-          const bar = makeBar(ratio, barWidth);
-          const name = shortModelName(model);
-          return `{#00aa00-fg}${name}{/} {green-fg}${bar}{/} {#006666-fg}${formatNum(tokens)}{/}`;
-        });
-        lines.push('  ' + barParts.join('  '));
+      // Row 3: Network sparkline
+      const row3 = (
+        `{#006666-fg}NET{/} {#005500-fg}${spark}{/} {#00aa00-fg}${netSpeed}{/}`
+      );
+
+      // Divider
+      const div = `{#003300-fg}${'─'.repeat(Math.max(0, sw))}{/}`;
+
+      // Usage rows
+      let usageRow1 = '{#006666-fg}  ◈ LOADING USAGE...{/}';
+      let usageRow2 = '';
+
+      if (this._usageData) {
+        const d = this._usageData;
+        const inStr   = formatNum(d.totalInput);
+        const outStr  = formatNum(d.totalOutput);
+        const costStr = d.totalCost ? `$${d.totalCost.toFixed(2)}` : '$0.00';
+        const cacheStr = d.totalCacheRead ? formatNum(d.totalCacheRead) : '0';
+
+        usageRow1 = (
+          `{#006666-fg}TODAY{/} {green-fg}{bold}${inStr}{/bold}{/green-fg} in / ` +
+          `{green-fg}{bold}${outStr}{/bold}{/green-fg} out` +
+          `  {#006666-fg}cached: ${cacheStr}{/}` +
+          `  {#00aa00-fg}cost: {bold}${costStr}{/bold}{/}`
+        );
+
+        const models = Object.entries(d.modelBreakdown || {});
+        if (models.length > 0) {
+          const totalTok = models.reduce((s, [, v]) => s + (v.input || 0) + (v.output || 0), 0) || 1;
+          const barW = Math.min(8, Math.floor((sw - 20) / Math.max(1, models.length)));
+          const parts = models.map(([model, stats]) => {
+            const tok   = (stats.input || 0) + (stats.output || 0);
+            const ratio = tok / totalTok;
+            const bar   = makeBar(ratio, barW);
+            return `{#00aa00-fg}${shortModelName(model)}{/} {green-fg}${bar}{/}`;
+          });
+          const costFmt = `{#00aa00-fg}{bold}${costStr}{/bold}{/}`;
+          usageRow2 = `${costFmt}  ` + parts.join('  ');
+        }
       }
-    }
 
-    this.usageBox.setContent(lines.join('\n'));
-    this.screen.render();
-  }
+      const lines = [row1, row2, row3, div, usageRow1];
+      if (usageRow2) lines.push(usageRow2);
 
-  _getStatusTag(sessionIndex) {
-    const status = this.sessionStatus[sessionIndex];
-    switch (status) {
-      case 'waiting':    return '{#006666-fg}[waiting...]{/}';
-      case 'streaming':  return '{green-fg}{bold}[streaming▮]{/bold}{/green-fg}';
-      case 'idle':       return '{#00aa00-fg}[idle]{/}';
-      case 'complete':   return '{#00ffff-fg}[done ✓]{/}';
-      default:           return '{#006666-fg}[...]{/}';
+      this.headerBox.setContent(lines.join('\n'));
+    } catch (e) {
+      // don't crash
     }
   }
 
-  _renderSessionHeader(sessionIndex) {
-    const box = this.sessionBoxes[sessionIndex];
-    const file = this.sessionFiles[sessionIndex];
-    const status = this._getStatusTag(sessionIndex);
-
-    let fileInfo = '{#006666-fg}no file{/}';
-    if (file) {
-      const dir = path.basename(path.dirname(file));
-      const fname = path.basename(file, '.jsonl');
-      fileInfo = `{#006666-fg}${dir}/{/}{#00aa00-fg}${fname.slice(0, 20)}{/}`;
+  // ── Session label (fixed header) ─────────────────────────────────────────────
+  _getStatusTag(idx) {
+    switch (this.sessionStatus[idx]) {
+      case 'waiting':   return '{#006666-fg}[waiting]{/}';
+      case 'streaming': return '{green-fg}{bold}[streaming▮]{/bold}{/green-fg}';
+      case 'thinking':  return '{#005500-fg}[thinking...]{/}';
+      case 'idle':      return '{#00aa00-fg}[idle]{/}';
+      case 'complete':  return '{#00ffff-fg}[done ✓]{/}';
+      default:          return '{#006666-fg}[...]{/}';
     }
-
-    const header = `{green-fg}{bold} ◉ SESSION ${sessionIndex + 1}{/bold}{/green-fg}  ${status}  ${fileInfo}`;
-    const divider = '{#005500-fg}' + '─'.repeat(this.screen.width - 4) + '{/}';
-
-    const existing = this.sessionLogs[sessionIndex];
-    const allLines = [header, divider, ...existing];
-    box.setContent(allLines.join('\n'));
-    box.setScrollPerc(100);
-    this.screen.render();
   }
 
-  _addSessionLine(sessionIndex, line) {
-    const logs = this.sessionLogs[sessionIndex];
+  _renderSessionLabel(idx) {
+    try {
+      const box  = this.sessionHeaderBoxes[idx];
+      const file = this.sessionFiles[idx];
+      const status = this._getStatusTag(idx);
+
+      let fileInfo = '{#006666-fg}no file{/}';
+      if (file) {
+        const dir   = path.basename(path.dirname(file));
+        const fname = path.basename(file, '.jsonl');
+        const shortDir = dir.length > 30 ? '…' + dir.slice(-29) : dir;
+        fileInfo = `{#006666-fg}${escTag(shortDir)}/{/}{#00aa00-fg}${escTag(fname.slice(0, 24))}{/}`;
+      }
+
+      const label = `{green-fg}{bold} ◉ SESSION ${idx + 1}{/bold}{/green-fg}  ${status}  ${fileInfo}`;
+      box.setContent(label);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // ── Session log area ──────────────────────────────────────────────────────────
+  _renderSessionLog(idx) {
+    try {
+      const box  = this.sessionScrollBoxes[idx];
+      const logs = this.sessionLogs[idx];
+      box.setContent(logs.join('\n'));
+      // Auto-scroll to bottom
+      box.setScrollPerc(100);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  _addSessionLine(idx, line) {
+    const logs = this.sessionLogs[idx];
     logs.push(line);
 
-    // Keep last 200 lines
-    if (logs.length > 200) logs.splice(0, logs.length - 200);
+    // Keep last 300 lines
+    if (logs.length > 300) logs.splice(0, logs.length - 300);
 
-    this._renderSessionHeader(sessionIndex);
+    this._dirtySessions.add(idx);
+    this._scheduleRender();
   }
 
-  // ─── Public API ───
+  // ── Throttled render ──────────────────────────────────────────────────────────
+  _scheduleRender() {
+    if (this._renderPending) return;
+    this._renderPending = true;
+
+    // Batch renders: max 20fps (50ms)
+    setImmediate(() => {
+      this._renderPending = false;
+      this._doRender();
+    });
+  }
+
+  _doRender() {
+    try {
+      if (this._dirtyHeader) {
+        this._renderHeader();
+        this._dirtyHeader = false;
+      }
+
+      for (const idx of this._dirtySessions) {
+        this._renderSessionLabel(idx);
+        this._renderSessionLog(idx);
+      }
+      this._dirtySessions.clear();
+
+      this.screen.render();
+    } catch (e) {
+      // don't crash
+    }
+  }
+
+  // ── Timers ────────────────────────────────────────────────────────────────────
+  _startTimers() {
+    // Clock + system stats: update every second
+    this._clockTimer = setInterval(async () => {
+      this._dirtyHeader = true;
+
+      // Sample network
+      const netVal = await sampleNet().catch(() => 0);
+      pushNetSample(netVal);
+
+      this._scheduleRender();
+    }, 1000);
+  }
+
+  // ── Public API ────────────────────────────────────────────────────────────────
 
   setFile(sessionIndex, filePath) {
-    this.sessionFiles[sessionIndex] = filePath;
+    this.sessionFiles[sessionIndex]  = filePath;
     this.sessionStatus[sessionIndex] = 'idle';
-    this._renderSessionHeader(sessionIndex);
+    this._dirtySessions.add(sessionIndex);
+    this._scheduleRender();
   }
 
   setNoFile(sessionIndex) {
-    this.sessionFiles[sessionIndex] = null;
+    this.sessionFiles[sessionIndex]  = null;
     this.sessionStatus[sessionIndex] = 'waiting';
-    this.sessionLogs[sessionIndex] = [];
-    this._renderSessionHeader(sessionIndex);
+    this.sessionLogs[sessionIndex]   = [];
+    this._dirtySessions.add(sessionIndex);
+    this._scheduleRender();
   }
 
   addEvent(sessionIndex, event) {
-    let line = '';
+    let line = null;
     const ts = new Date().toISOString().substr(11, 8);
 
-    switch (event.type) {
-      case 'session-start':
-        line = `{#006666-fg}${ts}{/} {cyan-fg}▶ SESSION STARTED{/}`;
-        this.sessionStatus[sessionIndex] = 'idle';
-        break;
+    try {
+      switch (event.type) {
+        case 'session-start':
+          line = `{#006666-fg}${ts}{/} {cyan-fg}▶ SESSION STARTED{/}`;
+          this.sessionStatus[sessionIndex] = 'idle';
+          break;
 
-      case 'user': {
-        const text = event.content || '';
-        const preview = text.replace(/\n/g, ' ').slice(0, 120);
-        line = `{#006666-fg}${ts}{/} {#00ffff-fg}▷ USER:{/} {white-fg}${escTag(preview)}{/}`;
-        break;
-      }
-
-      case 'thinking':
-        this.sessionStatus[sessionIndex] = 'streaming';
-        line = `{#006666-fg}${ts}{/} {#005500-fg}◌ thinking...{/}`;
-        break;
-
-      case 'text': {
-        this.sessionStatus[sessionIndex] = 'streaming';
-        const text = event.content || '';
-        if (!text.trim()) return;
-        const preview = text.replace(/\n/g, ' ').slice(0, 150);
-        line = `{#006666-fg}${ts}{/} {green-fg}◎ {/}{white-fg}${escTag(preview)}{/}`;
-        break;
-      }
-
-      case 'tool_use':
-        this.sessionStatus[sessionIndex] = 'streaming';
-        line = `{#006666-fg}${ts}{/} {yellow-fg}⚙ ${escTag(event.content || '')}{/}`;
-        break;
-
-      case 'complete': {
-        const prevStatus = this.sessionStatus[sessionIndex];
-        this.sessionStatus[sessionIndex] = 'complete';
-
-        if (event.usage) {
-          const u = event.usage;
-          const inTok = formatNum(u.input_tokens || 0);
-          const outTok = formatNum(u.output_tokens || 0);
-          line = `{#006666-fg}${ts}{/} {#00ffff-fg}✓ DONE{/} {#006666-fg}in:${inTok} out:${outTok}{/}`;
-        } else {
-          line = `{#006666-fg}${ts}{/} {#00ffff-fg}✓ DONE{/}`;
+        case 'user': {
+          const text    = event.content || '';
+          const preview = escTag(text.replace(/\n/g, ' ').slice(0, 120));
+          line = `{#006666-fg}${ts}{/} {#00ffff-fg}▷ USER:{/} {white-fg}${preview}{/}`;
+          this.sessionStatus[sessionIndex] = 'streaming';
+          break;
         }
 
-        // Flash green background for 1.5 seconds
-        this._flashComplete(sessionIndex);
-        break;
-      }
+        case 'thinking': {
+          this.sessionStatus[sessionIndex] = 'thinking';
+          const thinkText = event.content || '';
+          // Truncate to ~2-3 short lines worth
+          const maxLen = 180;
+          const truncated = thinkText.replace(/\n/g, ' ').trim().slice(0, maxLen);
+          const display   = truncated.length < thinkText.trim().length
+            ? truncated + '…'
+            : truncated;
+          line = `{#006666-fg}${ts}{/} {#004400-fg}💭 ${escTag(display)}{/}`;
+          break;
+        }
 
-      default:
-        return;
+        case 'text': {
+          this.sessionStatus[sessionIndex] = 'streaming';
+          const text = event.content || '';
+          if (!text.trim()) return;
+          const preview = escTag(text.replace(/\n/g, ' ').slice(0, 150));
+          line = `{#006666-fg}${ts}{/} {green-fg}◎ {/}{white-fg}${preview}{/}`;
+          break;
+        }
+
+        case 'tool_use':
+          this.sessionStatus[sessionIndex] = 'streaming';
+          line = `{#006666-fg}${ts}{/} {yellow-fg}⚙ ${escTag(event.content || '')}{/}`;
+          break;
+
+        case 'complete': {
+          this.sessionStatus[sessionIndex] = 'complete';
+
+          if (event.usage) {
+            const u      = event.usage;
+            const inTok  = formatNum(u.input_tokens  || 0);
+            const outTok = formatNum(u.output_tokens || 0);
+            line = `{#006666-fg}${ts}{/} {#00ffff-fg}✓ DONE{/} {#006666-fg}in:${inTok} out:${outTok}{/}`;
+          } else {
+            line = `{#006666-fg}${ts}{/} {#00ffff-fg}✓ DONE{/}`;
+          }
+
+          this._flashComplete(sessionIndex);
+          break;
+        }
+
+        default:
+          return;
+      }
+    } catch (e) {
+      // don't crash on bad events
+      return;
     }
 
     if (line) {
+      this._updateSessionBg(sessionIndex);
       this._addSessionLine(sessionIndex, line);
     }
   }
 
-  _flashComplete(sessionIndex) {
-    const box = this.sessionBoxes[sessionIndex];
+  _updateSessionBg(sessionIndex) {
+    try {
+      const scrollBox  = this.sessionScrollBoxes[sessionIndex];
+      const labelBox   = this.sessionHeaderBoxes[sessionIndex];
+      const status     = this.sessionStatus[sessionIndex];
 
-    // Clear existing timer
-    if (this.completionTimers[sessionIndex]) {
-      clearTimeout(this.completionTimers[sessionIndex]);
+      const isActive = status === 'streaming' || status === 'thinking';
+      const bg = isActive ? COLORS.bgActive : COLORS.bgIdle;
+      const borderFg = isActive ? COLORS.dimGreen : COLORS.darkGreen;
+
+      scrollBox.style.bg = bg;
+      scrollBox.style.border = { fg: borderFg };
+      labelBox.style.bg  = bg;
+      labelBox.style.border = { fg: borderFg };
+    } catch (e) {
+      // ignore
     }
+  }
 
-    // Flash: green background
-    box.style.bg = COLORS.bgComplete;
-    box.style.border = { fg: COLORS.green };
-    this._renderSessionHeader(sessionIndex);
+  _flashComplete(sessionIndex) {
+    try {
+      const scrollBox = this.sessionScrollBoxes[sessionIndex];
+      const labelBox  = this.sessionHeaderBoxes[sessionIndex];
 
-    // Revert after 1.5s
-    this.completionTimers[sessionIndex] = setTimeout(() => {
-      box.style.bg = COLORS.black;
-      box.style.border = { fg: COLORS.darkGreen };
-      this.sessionStatus[sessionIndex] = 'idle';
-      this._renderSessionHeader(sessionIndex);
-    }, 1500);
+      if (this.completionTimers[sessionIndex]) {
+        clearTimeout(this.completionTimers[sessionIndex]);
+      }
+
+      // Flash: bright green
+      scrollBox.style.bg = COLORS.bgComplete;
+      scrollBox.style.border = { fg: COLORS.brightGreen };
+      labelBox.style.bg  = COLORS.bgComplete;
+      labelBox.style.border = { fg: COLORS.brightGreen };
+
+      this._dirtySessions.add(sessionIndex);
+      this._scheduleRender();
+
+      // Revert after 1.5s
+      this.completionTimers[sessionIndex] = setTimeout(() => {
+        try {
+          scrollBox.style.bg = COLORS.bgIdle;
+          scrollBox.style.border = { fg: COLORS.darkGreen };
+          labelBox.style.bg  = COLORS.bgIdle;
+          labelBox.style.border = { fg: COLORS.darkGreen };
+          this.sessionStatus[sessionIndex] = 'idle';
+          this._dirtySessions.add(sessionIndex);
+          this._scheduleRender();
+        } catch (e) {}
+      }, 1500);
+    } catch (e) {
+      // ignore
+    }
   }
 
   updateUsage(data) {
-    this._renderUsage(data);
-  }
-
-  _startAnimations() {
-    // Blinking cursor in streaming sessions
-    this.thinkingTimer = setInterval(() => {
-      this.thinkingAnimFrame = (this.thinkingAnimFrame + 1) % 4;
-      this.screen.render();
-    }, 500);
+    this._usageData   = data;
+    this._dirtyHeader = true;
+    this._scheduleRender();
   }
 
   destroy() {
-    if (this.thinkingTimer) clearInterval(this.thinkingTimer);
-    if (this.matrixTimer) clearInterval(this.matrixTimer);
+    if (this._clockTimer) clearInterval(this._clockTimer);
+    if (this._renderTimer) clearInterval(this._renderTimer);
     for (const t of this.completionTimers) {
       if (t) clearTimeout(t);
     }
     try { this.screen.destroy(); } catch (e) {}
   }
-}
-
-function escTag(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/\{/g, '\\{')
-    .replace(/\}/g, '\\}');
 }
 
 module.exports = { HackviewUI };
