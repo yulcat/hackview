@@ -240,7 +240,13 @@ class HackviewUI {
       style: { fg: COLORS.green, bg: COLORS.black },
     });
 
-    // ── System stats row: 4 columns ──
+    // ── System stats row: 4 columns (absolute widths to avoid rounding gaps) ──
+    const innerW = this.screen.width - 2; // headerBox border eats 2 chars
+    const col1W = Math.floor(innerW / 4);
+    const col2W = Math.floor(innerW / 4);
+    const col3W = Math.floor(innerW / 4);
+    const col4W = innerW - col1W - col2W - col3W; // last col absorbs remainder
+
     const colStyle = {
       tags: true,
       border: { type: 'line' },
@@ -250,7 +256,7 @@ class HackviewUI {
     this.cpuBox = blessed.box({
       parent: this.headerBox,
       top: 1, left: 0,
-      width: '25%',
+      width: col1W,
       height: sysRowH,
       label: ' CPU ',
       ...colStyle,
@@ -258,8 +264,8 @@ class HackviewUI {
 
     this.memBox = blessed.box({
       parent: this.headerBox,
-      top: 1, left: '25%',
-      width: '25%',
+      top: 1, left: col1W,
+      width: col2W,
       height: sysRowH,
       label: ' MEM ',
       ...colStyle,
@@ -268,8 +274,8 @@ class HackviewUI {
 
     this.netBox = blessed.box({
       parent: this.headerBox,
-      top: 1, left: '50%',
-      width: '25%',
+      top: 1, left: col1W + col2W,
+      width: col3W,
       height: sysRowH,
       label: ' NET ',
       ...colStyle,
@@ -277,8 +283,8 @@ class HackviewUI {
 
     this.uptimeBox = blessed.box({
       parent: this.headerBox,
-      top: 1, left: '75%',
-      width: '25%',
+      top: 1, left: col1W + col2W + col3W,
+      width: col4W,
       height: sysRowH,
       label: ' SYS ',
       ...colStyle,
@@ -290,7 +296,7 @@ class HackviewUI {
       parent: this.headerBox,
       top: 1 + sysRowH,
       left: 0,
-      width: '100%',
+      width: innerW,
       height: usageH,
       tags: true,
       border: { type: 'line' },
