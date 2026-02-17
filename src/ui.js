@@ -103,7 +103,7 @@ function getMemPercent() {
 }
 
 // ─── Network sparkline state (fake/real hybrid) ───────────────────────────────
-const NET_HISTORY_LEN = 12;
+const NET_HISTORY_LEN = 24;
 let _netHistory = Array(NET_HISTORY_LEN).fill(0);
 let _prevNetBytes = null;
 let _lastNetBytes = 0;
@@ -306,32 +306,50 @@ class HackviewUI {
       // Mem bar (10 chars)
       const memBar = makeBar(mem.pct / 100, 10);
 
-      // Row 1: Clock  HACKVIEW  CPU%
+      // Helper: pad/fill a row to full width
+      const pad = (left, right, w) => {
+        const stripTags = (s) => s.replace(/\{[^}]*\}/g, '');
+        const visL = stripTags(left).length;
+        const visR = stripTags(right).length;
+        const gap = Math.max(1, w - visL - visR);
+        return left + ' '.repeat(gap) + right;
+      };
+
+      // Row 1: Clock left, HACKVIEW center, CPU right
       const cpuColor = cpu > 80 ? COLORS.red : cpu > 50 ? COLORS.yellow : COLORS.green;
-      const title = 'H A C K V I E W';
-      const row1 = (
-        `{green-fg}{bold}${clock}{/bold}{/green-fg}` +
-        `  {bold}{green-fg}${title}{/green-fg}{/bold}` +
-        `  {${cpuColor}-fg}▲${String(cpu).padStart(2)}%{/} {#005500-fg}${cpuBar}{/}`
-      );
+      const title = '◈ H A C K V I E W ◈';
+      const cpuStr = `{${cpuColor}-fg}CPU ▲${String(cpu).padStart(2)}%{/} {#005500-fg}${cpuBar}{/}`;
+      const clockStr = `{green-fg}{bold}${clock}{/bold}{/green-fg}`;
+      const titleStr = `{bold}{green-fg}${title}{/green-fg}{/bold}`;
+      // center the title
+      const stripTags = (s) => s.replace(/\{[^}]*\}/g, '');
+      const clockVis = stripTags(clockStr).length;
+      const titleVis = stripTags(titleStr).length;
+      const cpuVis = stripTags(cpuStr).length;
+      const totalVis = clockVis + titleVis + cpuVis;
+      const gapTotal = Math.max(0, sw - totalVis);
+      const gapL = Math.floor(gapTotal / 2);
+      const gapR = gapTotal - gapL;
+      const row1 = clockStr + ' '.repeat(gapL) + titleStr + ' '.repeat(gapR) + cpuStr;
 
-      // Row 2: Mem bar + uptime
+      // Row 2: MEM left, uptime right
       const memColor = mem.pct > 85 ? COLORS.red : mem.pct > 65 ? COLORS.yellow : COLORS.dimGreen;
-      const row2 = (
-        `{#006666-fg}MEM{/} {${memColor}-fg}${memBar}{/} {#00aa00-fg}${mem.pct}%{/}` +
-        `  {#006666-fg}UP{/} {#00aa00-fg}${uptime}{/}`
-      );
+      const memBarWide = makeBar(mem.pct / 100, 16);
+      const memStr = `{#006666-fg}MEM{/} {${memColor}-fg}${memBarWide}{/} {#00aa00-fg}${mem.pct}%{/}`;
+      const upStr = `{#006666-fg}UPTIME{/} {#00aa00-fg}${uptime}{/}`;
+      const row2 = pad(memStr, upStr, sw);
 
-      // Row 3: Network sparkline
-      const row3 = (
-        `{#006666-fg}NET{/} {#005500-fg}${spark}{/} {#00aa00-fg}${netSpeed}{/}`
-      );
+      // Row 3: Network sparkline left, speed right
+      const sparkWide = renderSparkline(_netHistory);
+      const netStr = `{#006666-fg}NET{/} {#005500-fg}${sparkWide}{/}`;
+      const speedStr = `{#00aa00-fg}${netSpeed}{/}`;
+      const row3 = pad(netStr, speedStr, sw);
 
       // Divider
       const div = `{#003300-fg}${'─'.repeat(Math.max(0, sw))}{/}`;
 
       // Usage rows
-      let usageRow1 = '{#006666-fg}  ◈ LOADING USAGE...{/}';
+      let usageRow1 = pad('{#006666-fg}◈ TOKENS{/}', '{#005500-fg}awaiting ccusage...{/}', sw);
       let usageRow2 = '';
 
       if (this._usageData) {
@@ -341,25 +359,21 @@ class HackviewUI {
         const costStr = d.totalCost ? `$${d.totalCost.toFixed(2)}` : '$0.00';
         const cacheStr = d.totalCacheRead ? formatNum(d.totalCacheRead) : '0';
 
-        usageRow1 = (
-          `{#006666-fg}TODAY{/} {green-fg}{bold}${inStr}{/bold}{/green-fg} in / ` +
-          `{green-fg}{bold}${outStr}{/bold}{/green-fg} out` +
-          `  {#006666-fg}cached: ${cacheStr}{/}` +
-          `  {#00aa00-fg}cost: {bold}${costStr}{/bold}{/}`
-        );
+        const tokLeft = `{#006666-fg}TODAY{/} {green-fg}{bold}${inStr}{/bold}{/green-fg} in / {green-fg}{bold}${outStr}{/bold}{/green-fg} out`;
+        const tokRight = `{#006666-fg}cache:{/} {#00aa00-fg}${cacheStr}{/}  {green-fg}{bold}${costStr}{/bold}{/green-fg}`;
+        usageRow1 = pad(tokLeft, tokRight, sw);
 
         const models = Object.entries(d.modelBreakdown || {});
         if (models.length > 0) {
           const totalTok = models.reduce((s, [, v]) => s + (v.input || 0) + (v.output || 0), 0) || 1;
-          const barW = Math.min(8, Math.floor((sw - 20) / Math.max(1, models.length)));
+          const barW = Math.min(10, Math.floor((sw - 10) / Math.max(1, models.length)));
           const parts = models.map(([model, stats]) => {
             const tok   = (stats.input || 0) + (stats.output || 0);
             const ratio = tok / totalTok;
             const bar   = makeBar(ratio, barW);
             return `{#00aa00-fg}${shortModelName(model)}{/} {green-fg}${bar}{/}`;
           });
-          const costFmt = `{#00aa00-fg}{bold}${costStr}{/bold}{/}`;
-          usageRow2 = `${costFmt}  ` + parts.join('  ');
+          usageRow2 = parts.join('  ');
         }
       }
 
