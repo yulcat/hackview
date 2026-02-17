@@ -25,32 +25,31 @@ function fetchUsage() {
   return new Promise((resolve) => {
     const today = getTodayDate();
 
-    // Use exec with shell:true so PATH is inherited properly (nvm, brew, etc.)
     const { exec } = require('child_process');
-    const cmd = `npx --yes ccusage@latest daily --json --since ${today}`;
-    exec(cmd, {
-      timeout: 45000,
-      maxBuffer: 2 * 1024 * 1024,
-      shell: true,
-      env: { ...process.env },
-    }, (err, stdout, stderr) => {
-      if (err) {
-        // fallback: try ccusage directly
-        exec(`ccusage daily --json --since ${today}`, {
-          timeout: 30000,
-          maxBuffer: 2 * 1024 * 1024,
-          shell: true,
-        }, (err2, stdout2) => {
-          if (err2) {
-            resolve(null);
-            return;
-          }
-          resolve(parseUsageOutput(stdout2));
-        });
-        return;
-      }
-      resolve(parseUsageOutput(stdout));
-    });
+    const args = `--yes ccusage@latest daily --json --since ${today}`;
+    // Try multiple npx locations (homebrew, nvm, system)
+    const npxPaths = [
+      'npx',
+      '/opt/homebrew/bin/npx',
+      '/usr/local/bin/npx',
+      `${process.env.HOME}/.nvm/versions/node/${process.version}/bin/npx`,
+    ];
+
+    const tryNext = (idx) => {
+      if (idx >= npxPaths.length) { resolve(null); return; }
+      const cmd = `${npxPaths[idx]} ${args}`;
+      exec(cmd, {
+        timeout: 45000,
+        maxBuffer: 2 * 1024 * 1024,
+        shell: '/bin/bash',
+        env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` },
+      }, (err, stdout) => {
+        if (err || !stdout.trim()) { tryNext(idx + 1); return; }
+        const result = parseUsageOutput(stdout);
+        if (result) { resolve(result); } else { tryNext(idx + 1); }
+      });
+    };
+    tryNext(0);
   });
 }
 
