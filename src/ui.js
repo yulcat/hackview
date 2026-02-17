@@ -208,8 +208,10 @@ class HackviewUI {
   _buildLayout() {
     const sh = this.screen.height;
 
-    // Header panel: bigger for contrib gauges
-    const headerHeight = 12;
+    // Header: title(1) + sysrow(3) + usage(6) + border(2) = 12
+    const sysRowH = 3;
+    const usageH = 6;
+    const headerHeight = 1 + sysRowH + usageH + 2; // 12
     const remainingH   = sh - headerHeight;
     const sessionH     = Math.floor(remainingH / this.numSessions);
 
@@ -238,78 +240,66 @@ class HackviewUI {
       style: { fg: COLORS.green, bg: COLORS.black },
     });
 
-    // CPU gauge (pure blessed)
+    // ── System stats row: 4 columns ──
+    const colStyle = {
+      tags: true,
+      border: { type: 'line' },
+      style: { fg: COLORS.green, bg: COLORS.black, border: { fg: COLORS.darkGreen } },
+    };
+
     this.cpuBox = blessed.box({
       parent: this.headerBox,
       top: 1, left: 0,
-      width: '50%',
-      height: 3,
+      width: '25%',
+      height: sysRowH,
       label: ' CPU ',
-      tags: true,
-      border: { type: 'line' },
-      style: {
-        fg: COLORS.green,
-        bg: COLORS.black,
-        border: { fg: COLORS.darkGreen },
-      },
+      ...colStyle,
     });
 
-    // MEM gauge (pure blessed)
     this.memBox = blessed.box({
       parent: this.headerBox,
-      top: 1, left: '50%',
-      width: '50%',
-      height: 3,
+      top: 1, left: '25%',
+      width: '25%',
+      height: sysRowH,
       label: ' MEM ',
-      tags: true,
-      border: { type: 'line' },
-      style: {
-        fg: COLORS.cyan,
-        bg: COLORS.black,
-        border: { fg: COLORS.darkGreen },
-      },
+      ...colStyle,
+      style: { fg: COLORS.cyan, bg: COLORS.black, border: { fg: COLORS.darkGreen } },
     });
 
-    // NET sparkline (pure blessed)
     this.netBox = blessed.box({
       parent: this.headerBox,
-      top: 4, left: 0,
-      width: '50%',
-      height: 3,
+      top: 1, left: '50%',
+      width: '25%',
+      height: sysRowH,
       label: ' NET ',
-      tags: true,
-      border: { type: 'line' },
-      style: {
-        fg: COLORS.green,
-        bg: COLORS.black,
-        border: { fg: COLORS.darkGreen },
-      },
+      ...colStyle,
     });
 
-    // Usage text box (right of sparkline)
+    this.uptimeBox = blessed.box({
+      parent: this.headerBox,
+      top: 1, left: '75%',
+      width: '25%',
+      height: sysRowH,
+      label: ' SYS ',
+      ...colStyle,
+      style: { fg: COLORS.dimGreen, bg: COLORS.black, border: { fg: COLORS.darkGreen } },
+    });
+
+    // ── Usage panel: full width, the star of the show ──
     this.usageBox = blessed.box({
       parent: this.headerBox,
-      top: 4, left: '50%',
-      width: '50%',
-      height: 3,
+      top: 1 + sysRowH,
+      left: 0,
+      width: '100%',
+      height: usageH,
       tags: true,
-      border: { type: 'line', fg: COLORS.darkGreen },
-      label: ' TOKENS ',
+      border: { type: 'line' },
+      label: ' ◈ TOKEN USAGE ◈ ',
       style: {
         fg: COLORS.green,
         bg: COLORS.black,
-        border: { fg: COLORS.darkGreen },
+        border: { fg: COLORS.dimGreen },
       },
-    });
-
-    // Bottom info row inside header
-    this.infoRow = blessed.box({
-      parent: this.headerBox,
-      top: 7, left: 0,
-      width: '100%',
-      height: 2,
-      tags: true,
-      style: { fg: COLORS.green, bg: COLORS.black },
     });
 
     // ── SESSION PANELS ──
@@ -404,53 +394,79 @@ class HackviewUI {
       const gapR = gapTotal - gapL;
       this.titleBox.setContent(clockStr + ' '.repeat(gapL) + titleStr + ' '.repeat(gapR) + upStr);
 
-      // CPU gauge (text bar)
-      const cpuBarW = Math.max(10, Math.floor((sw - 4) / 2) - 10);
-      const cpuBar = makeBar(cpu / 100, cpuBarW);
+      // ── System stats (compact 4-col) ──
+      const colW = Math.max(6, Math.floor(sw / 4) - 4);
+
+      // CPU
+      const cpuBar = makeBar(cpu / 100, colW - 5);
       this.cpuBox.setContent(`{green-fg}${cpuBar}{/} {bold}${cpu}%{/bold}`);
 
-      // MEM gauge (text bar)
-      const memBarW = cpuBarW;
-      const memBar = makeBar(mem.pct / 100, memBarW);
+      // MEM
+      const memBar = makeBar(mem.pct / 100, colW - 5);
       this.memBox.setContent(`{cyan-fg}${memBar}{/} {bold}${mem.pct}%{/bold}`);
 
-      // NET sparkline (text)
-      const spark = renderSparkline(_netHistory);
-      this.netBox.setContent(`{green-fg}${spark}{/} ${netSpeed}`);
+      // NET
+      const spark = renderSparkline(_netHistory.slice(-Math.min(colW, NET_HISTORY_LEN)));
+      this.netBox.setContent(`{green-fg}${spark}{/}\n${netSpeed}`);
 
-      // Usage box
-      let usageContent = '{#005500-fg}awaiting ccusage...{/}';
-      if (this._usageData && this._usageData._error) {
-        usageContent = `{red-fg}✗ ${escTag(this._usageData.message).slice(0, sw / 2 - 5)}{/}`;
-      } else if (this._usageData) {
-        const d = this._usageData;
-        const inStr   = formatNum(d.totalInput);
-        const outStr  = formatNum(d.totalOutput);
-        const costStr = d.totalCost ? `$${d.totalCost.toFixed(2)}` : '$0.00';
-        usageContent = `{green-fg}{bold}${inStr}{/bold}{/green-fg} in {green-fg}{bold}${outStr}{/bold}{/green-fg} out {green-fg}{bold}${costStr}{/bold}{/green-fg}`;
-      }
-      this.usageBox.setContent(usageContent);
+      // Uptime
+      this.uptimeBox.setContent(`{#00aa00-fg}${uptime}{/}`);
 
-      // Info row: model breakdown
-      let infoContent = '';
-      if (this._usageData && !this._usageData._error) {
-        const models = Object.entries(this._usageData.modelBreakdown || {});
-        if (models.length > 0) {
-          const totalTok = models.reduce((s, [, v]) => s + (v.input || 0) + (v.output || 0), 0) || 1;
-          const barW = Math.min(12, Math.floor((sw - 10) / Math.max(1, models.length)));
-          const parts = models.map(([model, stats]) => {
-            const tok   = (stats.input || 0) + (stats.output || 0);
-            const ratio = tok / totalTok;
-            const bar   = makeBar(ratio, barW);
-            return `{#00aa00-fg}${shortModelName(model)}{/} {green-fg}${bar}{/} {#006666-fg}${Math.round(ratio * 100)}%{/}`;
-          });
-          infoContent = parts.join('  ');
-        }
-      }
-      this.infoRow.setContent(infoContent);
+      // ── Usage panel (the big one) ──
+      this._renderUsagePanel(sw);
     } catch (e) {
       // don't crash
     }
+  }
+
+  // ── Usage panel rendering ──────────────────────────────────────────────────
+  _renderUsagePanel(sw) {
+    const lines = [];
+    const usableW = Math.max(20, sw - 4);
+
+    if (!this._usageData || this._usageData._error) {
+      const msg = this._usageData
+        ? `{red-fg}✗ ${escTag(this._usageData.message).slice(0, usableW - 5)}{/}`
+        : '{#005500-fg}⏳ awaiting ccusage...{/}';
+      lines.push('');
+      lines.push(msg);
+      this.usageBox.setContent(lines.join('\n'));
+      return;
+    }
+
+    const d = this._usageData;
+    const inStr   = formatNum(d.totalInput);
+    const outStr  = formatNum(d.totalOutput);
+    const cacheR  = formatNum(d.totalCacheRead);
+    const cacheW  = formatNum(d.totalCacheWrite);
+    const costStr = d.totalCost ? `$${d.totalCost.toFixed(2)}` : '$0.00';
+
+    // Line 1: totals
+    lines.push(`{green-fg}{bold}IN{/bold} ${inStr}  {bold}OUT{/bold} ${outStr}  {bold}CACHE{/bold} R:${cacheR} W:${cacheW}  {bold}COST{/bold} ${costStr}{/green-fg}`);
+
+    // Line 2+: model breakdown with full-width bars
+    const models = Object.entries(d.modelBreakdown || {});
+    if (models.length > 0) {
+      const totalTok = models.reduce((s, [, v]) => s + (v.input || 0) + (v.output || 0), 0) || 1;
+      // Sort by token count descending
+      models.sort((a, b) => ((b[1].input || 0) + (b[1].output || 0)) - ((a[1].input || 0) + (a[1].output || 0)));
+
+      const nameW = 10;
+      const pctW = 5;
+      const barW = Math.max(10, usableW - nameW - pctW - 20);
+
+      for (const [model, stats] of models) {
+        const tok = (stats.input || 0) + (stats.output || 0);
+        const ratio = tok / totalTok;
+        const pct = Math.round(ratio * 100);
+        const bar = makeBar(ratio, barW);
+        const name = shortModelName(model).padEnd(nameW);
+        const tokStr = formatNum(tok);
+        lines.push(`{#00aa00-fg}${name}{/} {green-fg}${bar}{/} {bold}${String(pct).padStart(3)}%{/bold} {#006666-fg}${tokStr}{/}`);
+      }
+    }
+
+    this.usageBox.setContent(lines.join('\n'));
   }
 
   // ── Session label (fixed header) ─────────────────────────────────────────────
