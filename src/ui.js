@@ -156,9 +156,11 @@ function formatBytes(n) {
 
 // ─── HackviewUI ───────────────────────────────────────────────────────────────
 class HackviewUI {
-  constructor(numSessions, budget = 40) {
+  constructor(numSessions, budget = 40, blockHours = 5) {
     this.numSessions = numSessions;
     this.budget = budget;
+    this.blockHours = blockHours;
+    this.blockStartMs = null; // auto-detected from file data
     this.screen = null;
 
     // Top panel: header box (fixed) + content box inside it
@@ -455,8 +457,24 @@ class HackviewUI {
     else if (pct >= 60) { statusIcon = '🟡'; statusLabel = 'OK';     statusColor = 'yellow-fg'; }
     else                { statusIcon = '🟢'; statusLabel = 'PLENTY'; statusColor = 'green-fg'; }
 
-    // Line 1: big cost summary
-    lines.push(`{bold}{green-fg}  ${costStr}{/green-fg} / {#006666-fg}${budgetStr}{/}  {${statusColor}}{bold}${statusIcon} ${statusLabel}{/bold}{/}  {#006666-fg}${pct.toFixed(1)}%{/}{/bold}`);
+    // Block reset countdown
+    let resetStr = '';
+    if (this.blockStartMs) {
+      const blockEndMs = this.blockStartMs + this.blockHours * 3600000;
+      const remainMs = blockEndMs - Date.now();
+      if (remainMs > 0) {
+        const rH = Math.floor(remainMs / 3600000);
+        const rM = Math.floor((remainMs % 3600000) / 60000);
+        const rS = Math.floor((remainMs % 60000) / 1000);
+        resetStr = `{#006666-fg}RESET{/} {#00aa00-fg}${rH}:${String(rM).padStart(2,'0')}:${String(rS).padStart(2,'0')}{/}`;
+      } else {
+        resetStr = '{#00ffff-fg}RESET NOW{/}';
+      }
+    }
+
+    // Line 1: big cost summary + reset timer
+    const summaryLeft = `{bold}{green-fg}  ${costStr}{/green-fg} / {#006666-fg}${budgetStr}{/}  {${statusColor}}{bold}${statusIcon} ${statusLabel}{/bold}{/}  {#006666-fg}${pct.toFixed(1)}%{/}{/bold}`;
+    lines.push(resetStr ? `${summaryLeft}  ${resetStr}` : summaryLeft);
 
     // Line 2: full-width budget bar (the hero)
     const barW = Math.max(20, usableW - 2);
