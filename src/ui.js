@@ -526,14 +526,23 @@ class HackviewUI {
 
         case 'thinking': {
           this.sessionStatus[sessionIndex] = 'thinking';
-          const thinkText = event.content || '';
-          // Truncate to ~2-3 short lines worth
-          const maxLen = 180;
-          const truncated = thinkText.replace(/\n/g, ' ').trim().slice(0, maxLen);
-          const display   = truncated.length < thinkText.trim().length
-            ? truncated + '…'
-            : truncated;
-          line = `{#006666-fg}${ts}{/} {#004400-fg}💭 ${escTag(display)}{/}`;
+          const thinkText = (event.content || '').trim();
+          if (!thinkText) {
+            line = `{#006666-fg}${ts}{/} {#00cc66-fg}💭 thinking...{/}`;
+          } else {
+            // Show full thinking text, split into multiple lines for busy scrolling effect
+            const lines = thinkText.split(/\n/).filter(l => l.trim());
+            const formatted = lines.map(l => `{#006666-fg}${ts}{/} {#00cc66-fg}💭 ${escTag(l)}{/}`);
+            // Push all lines, return early
+            for (const fl of formatted) {
+              this.sessionLogs[sessionIndex].push(fl);
+            }
+            this._dirtySessions.add(sessionIndex);
+            this._renderSessionLabel(sessionIndex);
+            this._renderSessionLog(sessionIndex);
+            this._scheduleRender();
+            return; // already pushed lines
+          }
           break;
         }
 

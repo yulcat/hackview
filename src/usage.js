@@ -25,16 +25,21 @@ function fetchUsage() {
   return new Promise((resolve) => {
     const today = getTodayDate();
 
-    // Try npx ccusage daily --json --since <today>
-    execFile('npx', ['--yes', 'ccusage@latest', 'daily', '--json', '--since', today], {
-      timeout: 30000,
-      maxBuffer: 1024 * 1024,
+    // Use exec with shell:true so PATH is inherited properly (nvm, brew, etc.)
+    const { exec } = require('child_process');
+    const cmd = `npx --yes ccusage@latest daily --json --since ${today}`;
+    exec(cmd, {
+      timeout: 45000,
+      maxBuffer: 2 * 1024 * 1024,
+      shell: true,
+      env: { ...process.env },
     }, (err, stdout, stderr) => {
       if (err) {
-        // Try without npx (if globally installed)
-        execFile('ccusage', ['daily', '--json', '--since', today], {
+        // fallback: try ccusage directly
+        exec(`ccusage daily --json --since ${today}`, {
           timeout: 30000,
-          maxBuffer: 1024 * 1024,
+          maxBuffer: 2 * 1024 * 1024,
+          shell: true,
         }, (err2, stdout2) => {
           if (err2) {
             resolve(null);
