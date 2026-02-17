@@ -1,7 +1,6 @@
 'use strict';
 
 const blessed = require('blessed');
-const contrib = require('blessed-contrib');
 const path = require('path');
 const os = require('os');
 const { formatNum } = require('./usage');
@@ -239,16 +238,15 @@ class HackviewUI {
       style: { fg: COLORS.green, bg: COLORS.black },
     });
 
-    // CPU gauge (blessed-contrib)
-    this.cpuGauge = contrib.gauge({
+    // CPU gauge (pure blessed)
+    this.cpuBox = blessed.box({
       parent: this.headerBox,
       top: 1, left: 0,
       width: '50%',
       height: 3,
       label: ' CPU ',
-      stroke: 'green',
-      fill: 'black',
-      border: { type: 'line', fg: COLORS.darkGreen },
+      tags: true,
+      border: { type: 'line' },
       style: {
         fg: COLORS.green,
         bg: COLORS.black,
@@ -256,16 +254,15 @@ class HackviewUI {
       },
     });
 
-    // MEM gauge (blessed-contrib)
-    this.memGauge = contrib.gauge({
+    // MEM gauge (pure blessed)
+    this.memBox = blessed.box({
       parent: this.headerBox,
       top: 1, left: '50%',
       width: '50%',
       height: 3,
       label: ' MEM ',
-      stroke: 'cyan',
-      fill: 'black',
-      border: { type: 'line', fg: COLORS.darkGreen },
+      tags: true,
+      border: { type: 'line' },
       style: {
         fg: COLORS.cyan,
         bg: COLORS.black,
@@ -273,15 +270,15 @@ class HackviewUI {
       },
     });
 
-    // NET sparkline (blessed-contrib)
-    this.netSpark = contrib.sparkline({
+    // NET sparkline (pure blessed)
+    this.netBox = blessed.box({
       parent: this.headerBox,
       top: 4, left: 0,
       width: '50%',
       height: 3,
       label: ' NET ',
       tags: true,
-      border: { type: 'line', fg: COLORS.darkGreen },
+      border: { type: 'line' },
       style: {
         fg: COLORS.green,
         bg: COLORS.black,
@@ -407,16 +404,19 @@ class HackviewUI {
       const gapR = gapTotal - gapL;
       this.titleBox.setContent(clockStr + ' '.repeat(gapL) + titleStr + ' '.repeat(gapR) + upStr);
 
-      // CPU gauge
-      this.cpuGauge.setPercent(cpu);
+      // CPU gauge (text bar)
+      const cpuBarW = Math.max(10, Math.floor((sw - 4) / 2) - 10);
+      const cpuBar = makeBar(cpu / 100, cpuBarW);
+      this.cpuBox.setContent(`{green-fg}${cpuBar}{/} {bold}${cpu}%{/bold}`);
 
-      // MEM gauge
-      this.memGauge.setPercent(mem.pct);
+      // MEM gauge (text bar)
+      const memBarW = cpuBarW;
+      const memBar = makeBar(mem.pct / 100, memBarW);
+      this.memBox.setContent(`{cyan-fg}${memBar}{/} {bold}${mem.pct}%{/bold}`);
 
-      // NET sparkline
-      try {
-        this.netSpark.setData([' ' + netSpeed], [_netHistory]);
-      } catch (e) { /* some blessed-contrib versions differ */ }
+      // NET sparkline (text)
+      const spark = renderSparkline(_netHistory);
+      this.netBox.setContent(`{green-fg}${spark}{/} ${netSpeed}`);
 
       // Usage box
       let usageContent = '{#005500-fg}awaiting ccusage...{/}';
