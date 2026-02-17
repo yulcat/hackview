@@ -11,8 +11,9 @@ class HackviewApp {
     this.dirs = opts.dirs || [];
     this.numSessions = opts.sessions || 2;
     this.usageInterval = opts.usageInterval || 60000;
+    this.budget = opts.budget || 40;
 
-    this.ui = new HackviewUI(this.numSessions);
+    this.ui = new HackviewUI(this.numSessions, this.budget);
     this.watchers = [];
     this.usageMonitor = null;
   }

@@ -156,8 +156,9 @@ function formatBytes(n) {
 
 // ─── HackviewUI ───────────────────────────────────────────────────────────────
 class HackviewUI {
-  constructor(numSessions) {
+  constructor(numSessions, budget = 40) {
     this.numSessions = numSessions;
+    this.budget = budget;
     this.screen = null;
 
     // Top panel: header box (fixed) + content box inside it
@@ -441,35 +442,49 @@ class HackviewUI {
     }
 
     const d = this._usageData;
-    const inStr   = formatNum(d.totalInput);
-    const outStr  = formatNum(d.totalOutput);
-    const cacheR  = formatNum(d.totalCacheRead);
-    const cacheW  = formatNum(d.totalCacheWrite);
-    const costStr = d.totalCost ? `$${d.totalCost.toFixed(2)}` : '$0.00';
+    const cost = d.totalCost || 0;
+    const budget = this.budget;
+    const pct = Math.min(100, (cost / budget) * 100);
+    const costStr = `$${cost.toFixed(2)}`;
+    const budgetStr = `$${budget}`;
 
-    // Line 1: totals
-    lines.push(`{green-fg}{bold}IN{/bold} ${inStr}  {bold}OUT{/bold} ${outStr}  {bold}CACHE{/bold} R:${cacheR} W:${cacheW}  {bold}COST{/bold} ${costStr}{/green-fg}`);
+    // Status indicator (plan-finder style)
+    let statusIcon, statusLabel, statusColor;
+    if (pct >= 100)     { statusIcon = '🔴'; statusLabel = 'OVER';   statusColor = 'red-fg'; }
+    else if (pct >= 80) { statusIcon = '🟠'; statusLabel = 'TIGHT';  statusColor = 'yellow-fg'; }
+    else if (pct >= 60) { statusIcon = '🟡'; statusLabel = 'OK';     statusColor = 'yellow-fg'; }
+    else                { statusIcon = '🟢'; statusLabel = 'PLENTY'; statusColor = 'green-fg'; }
 
-    // Line 2+: model breakdown with full-width bars
+    // Line 1: big cost summary
+    lines.push(`{bold}{green-fg}  ${costStr}{/green-fg} / {#006666-fg}${budgetStr}{/}  {${statusColor}}{bold}${statusIcon} ${statusLabel}{/bold}{/}  {#006666-fg}${pct.toFixed(1)}%{/}{/bold}`);
+
+    // Line 2: full-width budget bar (the hero)
+    const barW = Math.max(20, usableW - 2);
+    const filledN = Math.min(barW, Math.round((pct / 100) * barW));
+    const emptyN = barW - filledN;
+    let barColor = 'green-fg';
+    if (pct >= 80) barColor = 'red-fg';
+    else if (pct >= 60) barColor = 'yellow-fg';
+    const bar = `{${barColor}}${'█'.repeat(filledN)}{/}{#003300-fg}${'░'.repeat(emptyN)}{/}`;
+    lines.push(bar);
+
+    // Line 3: token details
+    const inStr  = formatNum(d.totalInput);
+    const outStr = formatNum(d.totalOutput);
+    const cacheR = formatNum(d.totalCacheRead);
+    const cacheW = formatNum(d.totalCacheWrite);
+    lines.push(`{#006666-fg}IN ${inStr}  OUT ${outStr}  CACHE R:${cacheR} W:${cacheW}{/}`);
+
+    // Line 4: model breakdown (compact, single line per model)
     const models = Object.entries(d.modelBreakdown || {});
     if (models.length > 0) {
-      const totalTok = models.reduce((s, [, v]) => s + (v.input || 0) + (v.output || 0), 0) || 1;
-      // Sort by token count descending
-      models.sort((a, b) => ((b[1].input || 0) + (b[1].output || 0)) - ((a[1].input || 0) + (a[1].output || 0)));
-
-      const nameW = 10;
-      const pctW = 5;
-      const barW = Math.max(10, usableW - nameW - pctW - 20);
-
-      for (const [model, stats] of models) {
-        const tok = (stats.input || 0) + (stats.output || 0);
-        const ratio = tok / totalTok;
-        const pct = Math.round(ratio * 100);
-        const bar = makeBar(ratio, barW);
-        const name = shortModelName(model).padEnd(nameW);
-        const tokStr = formatNum(tok);
-        lines.push(`{#00aa00-fg}${name}{/} {green-fg}${bar}{/} {bold}${String(pct).padStart(3)}%{/bold} {#006666-fg}${tokStr}{/}`);
-      }
+      models.sort((a, b) => ((b[1].cost || 0)) - ((a[1].cost || 0)));
+      const parts = models.map(([model, stats]) => {
+        const mCost = stats.cost || 0;
+        const mPct = budget > 0 ? ((mCost / budget) * 100).toFixed(0) : '0';
+        return `{#00aa00-fg}${shortModelName(model)}{/} {green-fg}$${mCost.toFixed(2)}{/} {#006666-fg}(${mPct}%){/}`;
+      });
+      lines.push(parts.join('  '));
     }
 
     this.usageBox.setContent(lines.join('\n'));

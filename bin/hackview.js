@@ -8,7 +8,7 @@ const minimist = require('minimist');
 
 const argv = minimist(process.argv.slice(2), {
   string: ['dirs', 'config'],
-  number: ['sessions'],
+  number: ['sessions', 'budget'],
   boolean: ['help', 'version'],
   alias: {
     h: 'help',
@@ -16,9 +16,11 @@ const argv = minimist(process.argv.slice(2), {
     d: 'dirs',
     s: 'sessions',
     c: 'config',
+    b: 'budget',
   },
   default: {
     sessions: 2,
+    budget: 40,
   },
 });
 
@@ -43,6 +45,7 @@ if (argv.help) {
     -d, --dirs <dirs>        Comma-separated list of .claude/projects dirs to watch
                              Default: ~/.claude/projects
     -s, --sessions <n>       Number of session panels to show (default: 2)
+    -b, --budget <dollars>   Session budget in USD (default: 40)
     -c, --config <file>      Path to config JSON file
     -v, --version            Show version
     -h, --help               Show this help
@@ -51,12 +54,14 @@ if (argv.help) {
     hackview
     hackview --dirs ~/.claude/projects/-Users-gon
     hackview --dirs ~/.claude/projects/-Users-gon,-Users-gon-work --sessions 3
+    hackview --budget 80
     hackview --sessions 1
 
   Config file format (~/.hackview.json):
     {
       "dirs": ["~/.claude/projects/-Users-gon"],
-      "sessions": 2
+      "sessions": 2,
+      "budget": 40
     }
 
   Press Ctrl+C or 'q' to quit.
@@ -79,6 +84,7 @@ for (const cfgPath of configPaths) {
     const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
     if (cfg.dirs) configDirs = Array.isArray(cfg.dirs) ? cfg.dirs : [cfg.dirs];
     if (cfg.sessions) configSessions = cfg.sessions;
+    if (cfg.budget) argv.budget = argv.budget === 40 ? cfg.budget : argv.budget;
     break;
   } catch (e) {
     // not found or parse error, continue
@@ -143,9 +149,12 @@ const sessions = argv.sessions || configSessions || 2;
 // Start the app
 const { HackviewApp } = require('../src/app');
 
+const budget = argv.budget || 40;
+
 const app = new HackviewApp({
   dirs: expandedDirs.length > 0 ? expandedDirs : dirs,
   sessions,
+  budget,
 });
 
 process.on('uncaughtException', (e) => {
