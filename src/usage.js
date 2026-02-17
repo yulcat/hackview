@@ -35,18 +35,30 @@ function fetchUsage() {
       `${process.env.HOME}/.nvm/versions/node/${process.version}/bin/npx`,
     ];
 
+    const errors = [];
     const tryNext = (idx) => {
-      if (idx >= npxPaths.length) { resolve(null); return; }
+      if (idx >= npxPaths.length) {
+        resolve({ _error: true, message: errors.join(' | ') || 'all npx paths failed' });
+        return;
+      }
       const cmd = `${npxPaths[idx]} ${args}`;
       exec(cmd, {
         timeout: 45000,
         maxBuffer: 2 * 1024 * 1024,
         shell: '/bin/bash',
         env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` },
-      }, (err, stdout) => {
-        if (err || !stdout.trim()) { tryNext(idx + 1); return; }
+      }, (err, stdout, stderr) => {
+        if (err || !stdout.trim()) {
+          const errMsg = `[${npxPaths[idx]}] ${err ? err.message.split('\n')[0] : 'empty output'}`;
+          errors.push(errMsg);
+          tryNext(idx + 1);
+          return;
+        }
         const result = parseUsageOutput(stdout);
-        if (result) { resolve(result); } else { tryNext(idx + 1); }
+        if (result) { resolve(result); } else {
+          errors.push(`[${npxPaths[idx]}] parse failed: ${stdout.slice(0, 100)}`);
+          tryNext(idx + 1);
+        }
       });
     };
     tryNext(0);

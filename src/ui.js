@@ -352,7 +352,10 @@ class HackviewUI {
       let usageRow1 = pad('{#006666-fg}◈ TOKENS{/}', '{#005500-fg}awaiting ccusage...{/}', sw);
       let usageRow2 = '';
 
-      if (this._usageData) {
+      if (this._usageData && this._usageData._error) {
+        usageRow1 = `{red-fg}✗ ccusage error:{/} {#ff6666-fg}${escTag(this._usageData.message).slice(0, sw - 5)}{/}`;
+        usageRow2 = '{#666666-fg}try: npx ccusage@latest daily --json{/}';
+      } else if (this._usageData) {
         const d = this._usageData;
         const inStr   = formatNum(d.totalInput);
         const outStr  = formatNum(d.totalOutput);
