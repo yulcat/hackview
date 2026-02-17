@@ -180,12 +180,71 @@ function formatUsageData(r) {
   };
 }
 
+/**
+ * Fetch active block info from ccusage blocks --active --json
+ */
+function fetchActiveBlock() {
+  return new Promise((resolve) => {
+    const { exec } = require('child_process');
+    const args = `--yes ccusage@latest blocks --active --json`;
+    const npxPaths = [
+      'npx',
+      '/opt/homebrew/bin/npx',
+      '/usr/local/bin/npx',
+      `${process.env.HOME}/.nvm/versions/node/${process.version}/bin/npx`,
+    ];
+
+    const tryNext = (idx) => {
+      if (idx >= npxPaths.length) {
+        resolve(null);
+        return;
+      }
+      const cmd = `${npxPaths[idx]} ${args}`;
+      exec(cmd, {
+        timeout: 45000,
+        maxBuffer: 2 * 1024 * 1024,
+        shell: '/bin/bash',
+        env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` },
+      }, (err, stdout) => {
+        if (err || !stdout.trim()) {
+          tryNext(idx + 1);
+          return;
+        }
+        try {
+          const data = JSON.parse(stdout.trim());
+          const blocks = data.blocks || [];
+          if (blocks.length > 0) {
+            const b = blocks[0];
+            resolve({
+              startTime: b.startTime,
+              endTime: b.endTime,
+              costUSD: b.costUSD || 0,
+              totalTokens: b.totalTokens || 0,
+              tokenCounts: b.tokenCounts || {},
+              models: b.models || [],
+              burnRate: b.burnRate,
+              projection: b.projection,
+              isActive: true,
+            });
+          } else {
+            resolve(null); // no active block
+          }
+        } catch (e) {
+          tryNext(idx + 1);
+        }
+      });
+    };
+    tryNext(0);
+  });
+}
+
 class UsageMonitor extends EventEmitter {
   constructor(intervalMs = 60000) {
     super();
     this.intervalMs = intervalMs;
     this.timer = null;
     this.lastData = null;
+    this.lastBlock = null;
   }
 
   start() {
@@ -199,13 +258,16 @@ class UsageMonitor extends EventEmitter {
 
   async _fetch() {
     try {
-      const data = await fetchUsage();
-      this.lastData = data;
-      this.emit('update', data);
+      const [data, block] = await Promise.all([fetchUsage(), fetchActiveBlock()]);
+      this.lastData = data || this.lastData;
+      this.lastBlock = block || this.lastBlock;
+      this.emit('update', this.lastData);
+      this.emit('block', this.lastBlock);
     } catch (e) {
       this.emit('update', this.lastData);
+      this.emit('block', this.lastBlock);
     }
   }
 }
 
-module.exports = { UsageMonitor, fetchUsage, formatNum, getTodayDate };
+module.exports = { UsageMonitor, fetchUsage, fetchActiveBlock, formatNum, getTodayDate };

@@ -2,7 +2,6 @@
 
 const path = require('path');
 const os = require('os');
-const fs = require('fs');
 const { HackviewUI } = require('./ui');
 const { SessionWatcher } = require('./watcher');
 const { UsageMonitor } = require('./usage');
@@ -29,13 +28,13 @@ class HackviewApp {
       this._startWatcher(i);
     }
 
-    // Detect block start from earliest session file today
-    this._detectBlockStart();
-
     // Start usage monitor
     this.usageMonitor = new UsageMonitor(this.usageInterval);
     this.usageMonitor.on('update', (data) => {
       this.ui.updateUsage(data);
+    });
+    this.usageMonitor.on('block', (block) => {
+      this.ui.updateBlock(block);
     });
     this.usageMonitor.start();
   }
@@ -61,38 +60,6 @@ class HackviewApp {
 
     watcher.start();
     this.watchers.push(watcher);
-  }
-
-  _detectBlockStart() {
-    // Find the earliest .jsonl file created today across all watched dirs
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    let earliest = null;
-
-    for (const dir of this.dirs) {
-      try {
-        const files = fs.readdirSync(dir).filter(f => f.endsWith('.jsonl'));
-        for (const f of files) {
-          const full = path.join(dir, f);
-          try {
-            const stat = fs.statSync(full);
-            // Use birthtime (creation) if available, else mtime
-            const created = stat.birthtimeMs || stat.mtimeMs;
-            if (created >= todayStart) {
-              if (earliest === null || created < earliest) {
-                earliest = created;
-              }
-            }
-          } catch (e) {}
-        }
-      } catch (e) {}
-    }
-
-    if (earliest) {
-      this.ui.blockStartMs = earliest;
-    }
-    // Re-check every 30s in case new sessions start
-    setInterval(() => this._detectBlockStart(), 30000);
   }
 
   stop() {

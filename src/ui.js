@@ -160,7 +160,7 @@ class HackviewUI {
     this.numSessions = numSessions;
     this.budget = budget;
     this.blockHours = blockHours;
-    this.blockStartMs = null; // auto-detected from file data
+    this._blockData = null; // from ccusage blocks --active
     this.screen = null;
 
     // Top panel: header box (fixed) + content box inside it
@@ -443,8 +443,9 @@ class HackviewUI {
       return;
     }
 
-    const d = this._usageData;
-    const cost = d.totalCost || 0;
+    // Use block data if available, fallback to daily usage
+    const block = this._blockData;
+    const cost = block ? (block.costUSD || 0) : (d.totalCost || 0);
     const budget = this.budget;
     const pct = Math.min(100, (cost / budget) * 100);
     const costStr = `$${cost.toFixed(2)}`;
@@ -457,10 +458,10 @@ class HackviewUI {
     else if (pct >= 60) { statusIcon = '🟡'; statusLabel = 'OK';     statusColor = 'yellow-fg'; }
     else                { statusIcon = '🟢'; statusLabel = 'PLENTY'; statusColor = 'green-fg'; }
 
-    // Block reset countdown
+    // Block reset countdown from ccusage active block
     let resetStr = '';
-    if (this.blockStartMs) {
-      const blockEndMs = this.blockStartMs + this.blockHours * 3600000;
+    if (block && block.endTime) {
+      const blockEndMs = new Date(block.endTime).getTime();
       const remainMs = blockEndMs - Date.now();
       if (remainMs > 0) {
         const rH = Math.floor(remainMs / 3600000);
@@ -468,8 +469,10 @@ class HackviewUI {
         const rS = Math.floor((remainMs % 60000) / 1000);
         resetStr = `{#006666-fg}RESET{/} {#00aa00-fg}${rH}:${String(rM).padStart(2,'0')}:${String(rS).padStart(2,'0')}{/}`;
       } else {
-        resetStr = '{#00ffff-fg}RESET NOW{/}';
+        resetStr = '{#00ffff-fg}BLOCK RESET{/}';
       }
+    } else if (!block) {
+      resetStr = '{#005500-fg}no active block{/}';
     }
 
     // Line 1: big cost summary + reset timer
@@ -768,6 +771,12 @@ class HackviewUI {
 
   updateUsage(data) {
     this._usageData   = data;
+    this._dirtyHeader = true;
+    this._scheduleRender();
+  }
+
+  updateBlock(block) {
+    this._blockData = block;
     this._dirtyHeader = true;
     this._scheduleRender();
   }
