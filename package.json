@@ -1,0 +1,26 @@
+{
+  "name": "hackview",
+  "version": "1.0.0",
+  "description": "Matrix-style TUI dashboard for Claude Code session logs",
+  "main": "src/app.js",
+  "bin": {
+    "hackview": "./bin/hackview.js"
+  },
+  "scripts": {
+    "start": "node bin/hackview.js",
+    "dev": "node bin/hackview.js --dirs ~/.claude/projects"
+  },
+  "dependencies": {
+    "blessed": "^0.1.81",
+    "chokidar": "^3.6.0",
+    "minimist": "^1.2.8"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yulcat/hackview.git"
+  }
+}
