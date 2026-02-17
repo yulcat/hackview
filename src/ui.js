@@ -489,24 +489,31 @@ class HackviewUI {
     const bar = `{${barColor}}${'█'.repeat(filledN)}{/}{#003300-fg}${'░'.repeat(emptyN)}{/}`;
     lines.push(bar);
 
-    // Line 3: token details
-    const inStr  = formatNum(d.totalInput);
-    const outStr = formatNum(d.totalOutput);
-    const cacheR = formatNum(d.totalCacheRead);
-    const cacheW = formatNum(d.totalCacheWrite);
-    lines.push(`{#006666-fg}IN ${inStr}  OUT ${outStr}  CACHE R:${cacheR} W:${cacheW}{/}`);
-
-    // Line 4: model breakdown (compact, single line per model)
-    const models = Object.entries(d.modelBreakdown || {});
-    if (models.length > 0) {
-      models.sort((a, b) => ((b[1].cost || 0)) - ((a[1].cost || 0)));
-      const parts = models.map(([model, stats]) => {
-        const mCost = stats.cost || 0;
-        const mPct = budget > 0 ? ((mCost / budget) * 100).toFixed(0) : '0';
-        return `{#00aa00-fg}${shortModelName(model)}{/} {green-fg}$${mCost.toFixed(2)}{/} {#006666-fg}(${mPct}%){/}`;
-      });
-      lines.push(parts.join('  '));
+    // Line 3: burn rate + projection (from block data)
+    if (block && block.burnRate) {
+      const cph = block.burnRate.costPerHour || 0;
+      const projCost = block.projection ? `→ $${block.projection.totalCost.toFixed(2)}` : '';
+      const projRemain = block.projection ? `${block.projection.remainingMinutes}m left` : '';
+      lines.push(`{#00aa00-fg}BURN{/} {green-fg}$${cph.toFixed(2)}/hr{/}  {#006666-fg}${projCost}  ${projRemain}{/}`);
     }
+
+    // Line 4: token details + models
+    const tokenParts = [];
+    // Token counts from block if available, else daily
+    const tc = block ? (block.tokenCounts || {}) : {};
+    const inTok  = formatNum(tc.inputTokens || d.totalInput || 0);
+    const outTok = formatNum(tc.outputTokens || d.totalOutput || 0);
+    const cacheR = formatNum(tc.cacheReadInputTokens || d.totalCacheRead || 0);
+    const cacheW = formatNum(tc.cacheCreationInputTokens || d.totalCacheWrite || 0);
+    tokenParts.push(`{#006666-fg}IN ${inTok}  OUT ${outTok}  CACHE R:${cacheR} W:${cacheW}{/}`);
+
+    // Models from block
+    const blockModels = block ? (block.models || []) : [];
+    if (blockModels.length > 0) {
+      const mStr = blockModels.map(m => `{#00aa00-fg}${shortModelName(m)}{/}`).join(' ');
+      tokenParts.push(mStr);
+    }
+    lines.push(tokenParts.join('  '));
 
     this.usageBox.setContent(lines.join('\n'));
   }
